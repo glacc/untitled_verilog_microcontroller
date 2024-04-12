@@ -7,5 +7,5 @@ The ram_module may varies by the target FPGA.
 
 #### TODO:
 - Listing of instruction set.
-- Implement of stack, subroutine and interrupt.
+- Implement of ~~stack, subroutine and~~ interrupt.
 - GPIO interrupt, timers, serial ports, UART.
