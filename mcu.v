@@ -1,6 +1,9 @@
 `define	CLK_30HZ_DIV4		24'd225000
 `define	CLK_100HZ_DIV4		24'd67500
+`define	CLK_500HZ_DIV4		24'd13500
 `define	CLK_3375KHZ_DIV4	24'd2
+
+`define	DIVIDER				`CLK_3375KHZ_DIV4
 
 module mcu_connections (
 	output	[15:0]	addr,
@@ -60,7 +63,7 @@ module mcu_connections (
 	always @(posedge clk) begin
 		clk_counter = clk_counter + 1'b1;
 
-		if (clk_counter >= `CLK_3375KHZ_DIV4) begin
+		if (clk_counter >= `DIVIDER) begin
 			clk_div = ~clk_div;
 			clk_counter = 24'd0;
 		end
