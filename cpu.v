@@ -462,6 +462,237 @@ module cpu (
 		end
 	
 	endtask
+
+// Task - Stack, Subrotine
+	// Positive edge
+	task stack_subroutine_posedge (
+		input		[3:0]		inst_cycle
+	);
+	
+		if (opcode[7:4] == 4'b0110) begin
+			if (opcode[3:0] == 4'b0010 || opcode[3:2] == 2'b01) begin
+				case (inst_cycle)
+					4'd1:
+						re = 1'b0;
+					4'd5:
+						re = 1'b1;
+				endcase
+			end
+
+			if (opcode[3:0] == 4'b0001 && inst_cycle == 4'd1) begin
+				re = 1'b0;
+			end
+		end
+
+	endtask
+
+	// Negative edge
+	task stack_subroutine_negedge (
+		input		[3:0]		inst_cycle
+	);
+	
+		if (opcode[7:4] == 4'b0110) begin
+			casez (opcode[3:0])
+				4'b0000: begin
+					// SSP $addr
+					case (inst_cycle)
+						4'd0: begin
+							ic_inc;
+							pc_inc;
+						end
+						4'd1: begin
+							sp[15:8] = data;
+
+							ic_inc;
+							pc_inc;
+						end
+						4'd2: begin
+							sp[7:0] = data;
+
+							ic_rst;
+							pc_inc;
+						end
+					endcase
+				end
+				4'b0001: begin
+					// PUH
+					case (inst_cycle)
+						4'd0: begin
+							addr_latch = sp;
+							data_latch = a;
+							indirect_addr_flag = 1'b1;
+
+							ic_inc;
+						end
+						4'd1: begin
+							we = 1'b1;
+
+							ic_inc;
+						end
+						4'd2: begin
+							indirect_addr_flag = 1'b0;
+
+							we = 1'b0;
+
+							sp = sp - 1'd1;
+
+							ic_rst;
+							pc_inc;
+						end
+					endcase
+				end
+				4'b0011: begin
+					// POP
+					case (inst_cycle)
+						4'd0: begin
+							addr_latch = sp + 1'd1;
+							indirect_addr_flag = 1'b1;
+
+							ic_inc;
+						end
+						4'd1: begin
+							a = data;
+
+							sp = sp + 1'd1;
+							
+							indirect_addr_flag = 1'b0;
+					
+							ic_rst;
+							pc_inc;
+						end
+					endcase
+				end
+				4'b0010: begin
+					// BSR $addr
+					case (inst_cycle)
+						4'd0: begin
+							addr_latch = sp;
+							data_latch = pc[7:0];
+							indirect_addr_flag = 1'b1;
+
+							ic_inc;
+						end
+						4'd1: begin
+							sp = sp - 1'd1;
+
+							we = 1'b1;
+
+							ic_inc;
+						end
+						4'd2: begin
+							addr_latch = sp;
+							data_latch = pc[15:8];
+							
+							we = 1'b0;
+
+							ic_inc;
+						end
+						4'd3: begin
+							sp = sp - 1'd1;
+
+							we = 1'b1;
+
+							ic_inc;
+						end
+						4'd4: begin
+							indirect_addr_flag = 1'b0;
+
+							we = 1'b0;
+
+							ic_inc;
+							pc_inc;
+						end
+						4'd5: begin
+							addr_latch_set_high(data);
+
+							ic_inc;
+							pc_inc;
+						end
+						4'd6: begin
+							addr_latch_set_low(data);
+
+							pc = pc + addr_latch;
+
+							ic_rst;
+						end
+					endcase
+				end
+				4'b01??: begin
+					// BSR An
+					case (inst_cycle)
+						4'd0: begin
+							addr_latch = sp;
+							data_latch = pc[7:0];
+							indirect_addr_flag = 1'b1;
+
+							ic_inc;
+						end
+						4'd1: begin
+							sp = sp - 1'd1;
+
+							we = 1'b1;
+
+							ic_inc;
+						end
+						4'd2: begin
+							addr_latch = sp;
+							data_latch = pc[15:8];
+							
+							we = 1'b0;
+
+							ic_inc;
+						end
+						4'd3: begin
+							sp = sp - 1'd1;
+
+							we = 1'b1;
+
+							ic_inc;
+						end
+						4'd4: begin
+							indirect_addr_flag = 1'b0;
+						
+							addr_latch_set(opcode[1:0]);
+							pc = addr_latch;
+
+							ic_rst;
+						end
+					endcase
+				end
+				4'b1000: begin
+					// RET
+					case (inst_cycle)
+						4'd0: begin
+							addr_latch = sp + 1'b1;
+							indirect_addr_flag = 1'b1;
+
+							sp = sp + 1'b1;
+							
+							ic_inc;
+						end
+						4'd1: begin
+							pc[15:8] = data;
+							addr_latch = sp + 1'b1;
+
+							sp = sp + 1'b1;
+
+							ic_inc;
+						end
+						4'd2: begin
+							pc[7:0] = data;
+
+							indirect_addr_flag = 1'b0;
+							
+							pc = pc + 2'd3;
+
+							ic_rst;
+						end
+					endcase
+				end
+			endcase
+		end
+
+	endtask
 	
 // Control
 
@@ -508,8 +739,10 @@ module cpu (
 		if (ic == 4'd0)
 			re = 1'b1;
 			
-		if (opcode != 8'b00000000)
+		if (opcode != 8'b00000000) begin
 			load_store_posedge(ic);
+			stack_subroutine_posedge(ic);
+		end
 			
 		addr = indirect_addr_flag ? addr_latch : pc;
 		
@@ -529,6 +762,7 @@ module cpu (
 				transfer_negedge;
 				arithmetic_logic_negedge;
 				compare_branch_negedge(ic);
+				stack_subroutine_negedge(ic);
 			end else
 				// NOP
 				pc_inc;
