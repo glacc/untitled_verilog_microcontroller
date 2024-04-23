@@ -5,12 +5,16 @@ module cpu (
 	output	reg	re,
 	output	reg	we,
 
+	input		interrupt,
+
 	input		clk,
 	
 	input		rst
 );
 
-	reg		[7:0]		opcode;
+	reg		[1:0]		rst_counter = 2'b00;
+
+	reg		[7:0]		opcode = 8'b00000000;
 	
 // Registers
 	reg		[7:0]		r0;
@@ -43,7 +47,7 @@ module cpu (
 	reg		[7:0]		data_latch;
 	reg		[15:0]	addr_latch;
 	
-	reg		indirect_addr_flag;
+	reg		indirect_addr_flag = 1'b0;
 	
 	assign	data = re ? 8'bzzzzzzzz : data_latch;
 	
@@ -60,7 +64,7 @@ module cpu (
 	endtask
 
 // Instruction Counter
-	reg		[3:0]		ic;
+	reg		[3:0]		ic = 4'b0000;
 	
 	task ic_inc;
 		ic = ic + 1'b1;
@@ -73,6 +77,14 @@ module cpu (
 // Compare Flags
 	reg		cmp_equal_flag = 1'b0;
 	reg		cmp_less_than_flag = 1'b0;
+
+// Vector Flags
+	reg		startup_flag = 1'b1;
+	reg		int_start_flag = 1'b0;
+	reg		int_end_flag = 1'b0;
+	
+	wire		int_flag;
+	assign	int_flag = int_start_flag ^ int_end_flag;
 
 // Address Register Tasks
 	task addr_latch_set (
@@ -397,7 +409,8 @@ module cpu (
 	
 // Task - Compare & Branch
 
-	wire	bra_condition;
+	wire	branch_condition;
+	wire	branch_condition_indirect;
 	assign branch_condition = (cmp_equal_flag && opcode[1:0] == 2'b11)	||
 									(cmp_less_than_flag && opcode[1:0] == 2'b10)	||
 									opcode[1:0] == 2'b01;
@@ -694,10 +707,155 @@ module cpu (
 
 	endtask
 	
+// Task - Startup / Interrupt
+
+	task startup_negedge (
+		input		[3:0]		inst_cycle
+	);
+		
+		case (inst_cycle)
+			4'd0: begin
+				addr_latch = 16'h0000;
+				indirect_addr_flag = 1'b1;
+
+				ic_inc;
+			end
+			4'd1: begin
+				pc[15:8] = data;
+				addr_latch = 16'h0001;
+
+				ic_inc;
+			end
+			4'd2:	begin
+				pc[7:0] = data;
+				indirect_addr_flag = 1'b0;
+
+				startup_flag = 1'b0;
+
+				ic_rst;
+			end
+		endcase
+
+	endtask
+	
+	task interrupt_posedge (
+		input		[3:0]		inst_cycle
+	);
+	
+		case (inst_cycle)
+			4'd1:
+				re = 1'b0;
+			4'd5:
+				re = 1'b1;
+		endcase
+	
+	endtask
+
+	task interrupt_negedge (
+		input		[3:0]		inst_cycle
+	);
+		
+		case (inst_cycle)
+			4'd0: begin
+				addr_latch = sp;
+				data_latch = pc[7:0];
+				indirect_addr_flag = 1'b1;
+
+				ic_inc;
+			end
+			4'd1: begin
+				sp = sp - 1'd1;
+
+				we = 1'b1;
+
+				ic_inc;
+			end
+			4'd2: begin
+				addr_latch = sp;
+				data_latch = pc[15:8];
+				
+				we = 1'b0;
+
+				ic_inc;
+			end
+			4'd3: begin
+				sp = sp - 1'd1;
+
+				we = 1'b1;
+
+				ic_inc;
+			end
+			4'd4: begin
+				addr_latch = 16'h0002;
+
+				we = 1'b0;
+
+				ic_inc;
+			end
+			4'd5: begin
+				pc[15:8] = data;
+				addr_latch = 16'h0003;
+
+				ic_inc;
+			end
+			4'd6: begin
+				pc[7:0] = data;
+				indirect_addr_flag = 1'b0;
+
+				int_end_flag = ~int_end_flag;
+				
+				ic_rst;
+			end
+		endcase
+
+	endtask
+	
 // Control
 
-	task reset_neg;
-		begin
+	always @(negedge interrupt or negedge rst) begin
+		
+		if (!rst)
+			int_start_flag = 1'b0;
+		else begin
+			if (!int_flag)
+				int_start_flag = ~int_start_flag;
+		end
+
+	end
+	
+	always @(posedge clk or negedge rst) begin
+		
+		if (!rst)
+			re = 1'b1;
+		else begin
+
+			if (rst_counter == 2'b11) begin
+
+				if (ic == 4'd0)
+					re = 1'b1;
+					
+				if (int_flag)
+					interrupt_posedge(ic);
+					
+				if (opcode != 8'b00000000 && !startup_flag && !int_flag) begin
+					load_store_posedge(ic);
+					stack_subroutine_posedge(ic);
+				end
+					
+				addr = indirect_addr_flag ? addr_latch : pc;
+
+			end
+
+		end
+
+	end
+	
+	always @(negedge clk or negedge rst) begin
+	
+		if (!rst) begin
+
+			rst_counter = 2'b00;
+
 			r0 = 8'b00000000;
 			r1 = 8'b00000000;
 			r2 = 8'b00000000;
@@ -726,47 +884,36 @@ module cpu (
 			data_latch = 8'b00000000;
 			addr_latch = 16'b0000000000000000;
 			indirect_addr_flag = 1'b0;
-			
-		end
 
-	endtask
-	
-	always @(posedge clk) begin
-		
-		if (!rst)
-			re = 1'b1;
-			
-		if (ic == 4'd0)
-			re = 1'b1;
-			
-		if (opcode != 8'b00000000) begin
-			load_store_posedge(ic);
-			stack_subroutine_posedge(ic);
-		end
-			
-		addr = indirect_addr_flag ? addr_latch : pc;
-		
-	end
-	
-	always @(negedge clk or negedge rst) begin
-	
-		if (!rst) begin
-			reset_neg;
+			startup_flag = 1'b1;
+			int_end_flag = 1'b0;
+
 		end else begin
 
-			if (ic == 4'd0)
-				opcode = data;
-			
-			if (opcode != 8'b00000000) begin
-				load_store_negedge(ic);
-				transfer_negedge;
-				arithmetic_logic_negedge;
-				compare_branch_negedge(ic);
-				stack_subroutine_negedge(ic);
+			if (rst_counter == 2'b11) begin
+
+				if (ic == 4'd0 && !startup_flag && !int_flag)
+					opcode = data;
+
+				if (opcode != 8'b00000000 && !startup_flag && !int_flag) begin
+					load_store_negedge(ic);
+					transfer_negedge;
+					arithmetic_logic_negedge;
+					compare_branch_negedge(ic);
+					stack_subroutine_negedge(ic);
+				end else begin
+					if (startup_flag)
+						startup_negedge(ic);
+					else if (int_flag)
+						interrupt_negedge(ic);
+					else
+						// NOP
+						pc_inc;
+				end
+
 			end else
-				// NOP
-				pc_inc;
-			
+				rst_counter = rst_counter + 2'b01;
+
 		end
 	end
 
