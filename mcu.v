@@ -15,7 +15,7 @@ module mcu_connections (
 	//output	wren,
 	
 	//output	ccpu,
-	//output	cram,
+	//output	cio,
 
 	inout		[7:0]		p0,
 	inout		[7:0]		p1,
@@ -23,23 +23,31 @@ module mcu_connections (
 	//inout		[7:0]		p2,
 	//inout		[7:0]		p3,
 
+	input		int_ext,
+
 	input		clk,
 	
 	input		rst
 );
 
 // CLOCK	
+	parameter		reset_length = 16'd0;
+	parameter		reset_start = 16'd0;
+	reg	[15:0]	reset_timer = 16'd0;
 	wire	ccpu;
-	wire	cram;
+	wire	cio;
 
 	reg	[23:0]	clk_counter = 24'd0;
 	reg	clk_div = 1'b0;
 	reg	clk_div_2 = 1'b0;
 
 	reg	clk_cpu = 1'b0;
-	reg	clk_ram = 1'b0;	
+	reg	clk_io = 1'b0;	
 	assign ccpu = clk_cpu;
-	assign cram = clk_ram;
+	assign cio = clk_io;
+
+	wire		rst_internal;
+	assign	rst_internal = ~((reset_timer >= reset_start & reset_timer < reset_length) | ~rst);
 	
 // CONNECTIONS
 	wire	[15:0]	addr;
@@ -51,6 +59,7 @@ module mcu_connections (
 
 	wire	[7:0]		data_ram_out;
 	wire	[7:0]		data_pio_out;
+	wire	[7:0]		data_tmr_out;
 
 	assign data = data_cpu;
 	assign addr = addr_cpu;
@@ -58,29 +67,41 @@ module mcu_connections (
 	assign data_cpu = rden ? 
 							addr_cpu <= 16'h0FFF ? data_ram_out :
 							addr_cpu >= 16'hFB00 & addr_cpu <= 16'hFB0F ? data_pio_out :
+							addr_cpu >= 16'hFB10 & addr_cpu <= 16'hFB13 ? data_tmr_out :
 							8'bzzzzzzzz : 8'bzzzzzzzz;
 
 // ENABLE_SIGNALS
 	wire	ce_ram;
 	wire	ce_pio;
+	wire	ce_tmr;
 	assign	ce_ram = addr_cpu <= 16'h0FFF ? 1'b1 : 1'b0;
 	assign	ce_pio = addr_cpu >= 16'hFB00 & addr_cpu <= 16'hFB0F ? 1'b1 : 1'b0;
+	assign	ce_tmr = addr_cpu >= 16'hFB10 & addr_cpu <= 16'hFB13 ? 1'b1 : 1'b0;
 
 	wire rst_reverse;
-	assign rst_reverse = ~rst;
+	assign rst_reverse = ~rst_internal;
+	
+// INTERRUPT_SIGNALS
+	wire 	interrupt;
+	wire 	int_timer;
+	
+	//assign 	interrupt = ~(int_timer | ~int_ext);
+	assign 	interrupt = ~int_timer;
 
 // ALWAYS
 	always @(posedge clk or negedge rst) begin
-		if (!rst)
+		if (!rst) begin
 			clk_counter = 1'b0;
-		else begin
+		end else begin
+			if (reset_timer < reset_length)
+				reset_timer = reset_timer + 1'b1;
+			else begin
+				clk_counter = clk_counter + 1'b1;
 
-			clk_counter = clk_counter + 1'b1;
-
-			if (clk_counter >= `DIVIDER) begin
-				clk_div = ~clk_div;
-				clk_counter = 24'd0;
-
+				if (clk_counter >= `DIVIDER) begin
+					clk_div = ~clk_div;
+					clk_counter = 24'd0;
+				end
 			end
 		end
 	end
@@ -99,9 +120,9 @@ module mcu_connections (
 	
 	always @(negedge clk_div_2 or negedge rst)
 		if (!rst)
-			clk_ram = 1'b0;
+			clk_io = 1'b0;
 		else
-			clk_ram = ~clk_ram;
+			clk_io = ~clk_io;
 	
 // MODULES
 	// CPU
@@ -111,14 +132,14 @@ module mcu_connections (
 		.data			(data_cpu),
 		.we			(wren),
 		.re			(rden),
-		.interrupt	(1'b1),
-		.rst			(rst)
+		.interrupt	(interrupt),
+		.rst			(rst_internal)
 	);
 
 	// RAM	($0000 - $09FF)
 	ram ram (
 		.dout		(data_ram_out), 	//output [7:0] dout
-		.clk		(clk_ram), 			//input clk
+		.clk		(clk_io), 			//input clk
 		.oce		(ce_ram),		 	//input oce
 		.ce		(ce_ram), 			//input ce
 		.reset	(rst_reverse),		//input reset
@@ -133,14 +154,28 @@ module mcu_connections (
 		.p1			(p1),
 		//.p2			(p2),
 		//.p3			(p3),
-		.clk			(clk_ram),
+		.clk			(clk_io),
 		.wren			(wren),
 		.rden			(rden),
 		.addr			(addr_cpu[3:0]),
 		.data_in		(data_cpu),
 		.data_out	(data_pio_out),
 		.ce			(ce_pio),
-		.rst			(rst)
+		.rst			(rst_internal)
+	);
+
+	// TMR1	($FB10 - $FB13)
+	timer timer_module (
+		.rs			(addr_cpu[1:0]),
+		.wren			(wren),
+		.rden			(rden),
+		.data_in		(data_cpu),
+		.data_out	(data_tmr_out),
+		.en			(ce_tmr),
+		.clk_io		(clk_io),
+		.clk_tmr		(clk),
+		.interrupt	(int_timer),
+		.rst			(rst_internal)
 	);
 
 endmodule
