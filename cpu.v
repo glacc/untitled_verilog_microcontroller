@@ -85,6 +85,9 @@ module cpu (
 	
 	wire		int_flag;
 	assign	int_flag = int_start_flag ^ int_end_flag;
+	
+	reg		doing_startup = 1'b0;
+	reg		doing_interrupt = 1'b0;
 
 // Address Register Tasks
 	task addr_latch_set (
@@ -579,6 +582,8 @@ module cpu (
 					// BSR $addr
 					case (inst_cycle)
 						4'd0: begin
+							pc = pc + 2'd3;
+							
 							addr_latch = sp;
 							data_latch = pc[7:0];
 							indirect_addr_flag = 1'b1;
@@ -595,6 +600,8 @@ module cpu (
 						4'd2: begin
 							addr_latch = sp;
 							data_latch = pc[15:8];
+							
+							pc = pc - 2'd3;
 							
 							we = 1'b0;
 
@@ -634,6 +641,8 @@ module cpu (
 					// BSR An
 					case (inst_cycle)
 						4'd0: begin
+							pc = pc + 2'd3;
+							
 							addr_latch = sp;
 							data_latch = pc[7:0];
 							indirect_addr_flag = 1'b1;
@@ -650,6 +659,8 @@ module cpu (
 						4'd2: begin
 							addr_latch = sp;
 							data_latch = pc[15:8];
+							
+							pc = pc - 2'd3;
 							
 							we = 1'b0;
 
@@ -695,8 +706,6 @@ module cpu (
 							pc[7:0] = data;
 
 							indirect_addr_flag = 1'b0;
-							
-							pc = pc + 2'd3;
 
 							ic_rst;
 						end
@@ -731,6 +740,7 @@ module cpu (
 				indirect_addr_flag = 1'b0;
 
 				startup_flag = 1'b0;
+				doing_startup = 1'b0;
 
 				ic_rst;
 			end
@@ -803,6 +813,7 @@ module cpu (
 				indirect_addr_flag = 1'b0;
 
 				int_end_flag = ~int_end_flag;
+				doing_interrupt = 1'b0;
 				
 				ic_rst;
 			end
@@ -834,10 +845,10 @@ module cpu (
 				if (ic == 4'd0)
 					re = 1'b1;
 					
-				if (int_flag)
+				if (doing_interrupt)
 					interrupt_posedge(ic);
 					
-				if (opcode != 8'b00000000 && !startup_flag && !int_flag) begin
+				if (opcode != 8'b00000000 && !doing_interrupt && !doing_startup) begin
 					load_store_posedge(ic);
 					stack_subroutine_posedge(ic);
 				end
@@ -856,55 +867,66 @@ module cpu (
 
 			rst_counter = 2'b00;
 
-			r0 = 8'b00000000;
-			r1 = 8'b00000000;
-			r2 = 8'b00000000;
-			r3 = 8'b00000000;
-			r4 = 8'b00000000;
-			r5 = 8'b00000000;
-			r6 = 8'b00000000;
-			r7 = 8'b00000000;
-			a0 = 16'b0000000000000000;
-			a1 = 16'b0000000000000000;
-			a2 = 16'b0000000000000000;
-			a3 = 16'b0000000000000000;
+			r0 = 8'h00;
+			r1 = 8'h00;
+			r2 = 8'h00;
+			r3 = 8'h00;
+			r4 = 8'h00;
+			r5 = 8'h00;
+			r6 = 8'h00;
+			r7 = 8'h00;
+			a0 = 16'h0000;
+			a1 = 16'h0000;
+			a2 = 16'h0000;
+			a3 = 16'h0000;
 			
-			pc = 16'b0000000000000000;
-			sp = 16'b0000000000000000;
+			pc = 16'h0000;
+			sp = 16'h0000;
 			
-			a = 8'b00000000;
-			b = 8'b00000000;
+			a = 8'h00;
+			b = 8'h00;
 			
-			ic = 4'b0000;
+			ic = 4'h0;
 			
 			we = 1'b0;
 			
-			opcode = 8'b00000000;
+			opcode = 8'h00;
 			
-			data_latch = 8'b00000000;
-			addr_latch = 16'b0000000000000000;
+			data_latch = 8'h00;
+			addr_latch = 16'h0000;
 			indirect_addr_flag = 1'b0;
 
 			startup_flag = 1'b1;
+			doing_startup = 1'b0;
+			doing_interrupt = 1'b0;
 			int_end_flag = 1'b0;
 
 		end else begin
 
 			if (rst_counter == 2'b11) begin
 
-				if (ic == 4'd0 && !startup_flag && !int_flag)
-					opcode = data;
+				if (ic == 4'd0) begin
+					if (!startup_flag && !int_flag)
+						opcode = data;
+					else begin
+						if (startup_flag)
+							doing_startup = 1'b1;
+							
+						if (int_flag)
+							doing_interrupt = 1'b1;
+					end
+				end
 
-				if (opcode != 8'b00000000 && !startup_flag && !int_flag) begin
+				if (opcode != 8'h00 && !doing_startup && !doing_interrupt) begin
 					load_store_negedge(ic);
 					transfer_negedge;
 					arithmetic_logic_negedge;
 					compare_branch_negedge(ic);
 					stack_subroutine_negedge(ic);
 				end else begin
-					if (startup_flag)
+					if (doing_startup)
 						startup_negedge(ic);
-					else if (int_flag)
+					else if (doing_interrupt)
 						interrupt_negedge(ic);
 					else
 						// NOP
