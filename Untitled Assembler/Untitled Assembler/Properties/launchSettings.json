@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "Untitled Assembler": {
+      "commandName": "Project",
+      "commandLineArgs": "-i .\\timer_test_2.asm -o \"D:\\ProjectHardware\\_FPGA\\untitled_microcontroller\\src\\compiled_prgm.mi\" -s 4096 -f mi"
+    }
+  }
+}

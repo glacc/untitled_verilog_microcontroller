@@ -1,0 +1,1 @@
+".\Untitled Assembler.exe" -i .\test_prgm.asm -o "D:\ProjectHardware\_FPGA\untitled_microcontroller\src\compiled_prgm.mi" -s 4096 -f mi
